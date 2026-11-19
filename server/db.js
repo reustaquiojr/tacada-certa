@@ -21,6 +21,7 @@ CREATE TABLE IF NOT EXISTS users (
   username TEXT NOT NULL UNIQUE COLLATE NOCASE,
   password_hash TEXT NOT NULL,
   role TEXT NOT NULL CHECK (role IN ('admin', 'user')),
+  must_change_password INTEGER NOT NULL DEFAULT 1,
   created_at INTEGER NOT NULL
 );
 
@@ -96,6 +97,32 @@ CREATE INDEX IF NOT EXISTS idx_matches_event ON matches(event_id, created_at);
 CREATE INDEX IF NOT EXISTS idx_sessions_exp ON sessions(expires_at);
 `);
 
+try {
+  const cols = db.prepare("PRAGMA table_info(users)").all().map((c) => c.name);
+  if (!cols.includes("must_change_password")) {
+    db.exec("ALTER TABLE users ADD COLUMN must_change_password INTEGER NOT NULL DEFAULT 0");
+  }
+} catch {
+  /* already migrated */
+}
+
+try {
+  const evCols = db.prepare("PRAGMA table_info(events)").all().map((c) => c.name);
+  if (!evCols.includes("event_date")) {
+    db.exec("ALTER TABLE events ADD COLUMN event_date TEXT NOT NULL DEFAULT ''");
+  }
+} catch {
+  /* already migrated */
+}
+
+db.exec(`
+CREATE TABLE IF NOT EXISTS event_users (
+  event_id TEXT NOT NULL REFERENCES events(id) ON DELETE CASCADE,
+  user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+  PRIMARY KEY (event_id, user_id)
+);
+`);
+
 export function uid(len = 10) {
   const alphabet = "0123456789ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnopqrstuvwxyz";
   const bytes = randomBytes(len);
@@ -126,13 +153,24 @@ export function verifyPassword(password, stored) {
 const countUsers = db.prepare("SELECT COUNT(*) AS n FROM users");
 if (countUsers.get().n === 0) {
   db.prepare(
-    "INSERT INTO users (id, username, password_hash, role, created_at) VALUES (?, ?, ?, ?, ?)"
+    "INSERT INTO users (id, username, password_hash, role, must_change_password, created_at) VALUES (?, ?, ?, ?, 1, ?)"
   ).run(uid(12), "admin", hashPassword("admin"), "admin", now());
+} else {
+  const admin = db.prepare("SELECT * FROM users WHERE username = ?").get("admin");
+  if (admin && verifyPassword("admin", admin.password_hash)) {
+    db.prepare("UPDATE users SET must_change_password = 1 WHERE id = ?").run(admin.id);
+  }
 }
 
 export function publicUser(row) {
   if (!row) return null;
-  return { id: row.id, username: row.username, role: row.role, created_at: row.created_at };
+  return {
+    id: row.id,
+    username: row.username,
+    role: row.role,
+    must_change_password: !!row.must_change_password,
+    created_at: row.created_at
+  };
 }
 
 export function defaultMatchState(mesaName, melhorDe, name1, name2) {
@@ -174,9 +212,10 @@ export function parseState(json) {
 const stmts = {
   userByName: db.prepare("SELECT * FROM users WHERE username = ?"),
   userById: db.prepare("SELECT * FROM users WHERE id = ?"),
-  users: db.prepare("SELECT id, username, role, created_at FROM users ORDER BY username"),
-  insertUser: db.prepare("INSERT INTO users (id, username, password_hash, role, created_at) VALUES (?, ?, ?, ?, ?)"),
-  updateUser: db.prepare("UPDATE users SET username = COALESCE(?, username), role = COALESCE(?, role), password_hash = COALESCE(?, password_hash) WHERE id = ?"),
+  users: db.prepare("SELECT id, username, role, must_change_password, created_at FROM users ORDER BY username"),
+  insertUser: db.prepare("INSERT INTO users (id, username, password_hash, role, must_change_password, created_at) VALUES (?, ?, ?, ?, 1, ?)"),
+  updateUser: db.prepare("UPDATE users SET username = COALESCE(?, username), role = COALESCE(?, role), password_hash = COALESCE(?, password_hash), must_change_password = COALESCE(?, must_change_password) WHERE id = ?"),
+  setOwnPassword: db.prepare("UPDATE users SET password_hash = ?, must_change_password = 0 WHERE id = ?"),
   deleteUser: db.prepare("DELETE FROM users WHERE id = ?"),
   insertSession: db.prepare("INSERT INTO sessions (token, user_id, created_at, expires_at) VALUES (?, ?, ?, ?)"),
   sessionUser: db.prepare(
@@ -188,14 +227,29 @@ const stmts = {
   eventById: db.prepare("SELECT * FROM events WHERE id = ?"),
   eventBySlug: db.prepare("SELECT * FROM events WHERE slug = ?"),
   eventByIdOrSlug: db.prepare("SELECT * FROM events WHERE id = ? OR slug = ?"),
-  events: db.prepare("SELECT * FROM events ORDER BY created_at DESC"),
+  events: db.prepare("SELECT * FROM events ORDER BY event_date DESC, created_at DESC"),
+  eventsForUser: db.prepare(
+    `SELECT e.* FROM events e
+     INNER JOIN event_users eu ON eu.event_id = e.id
+     WHERE eu.user_id = ?
+     ORDER BY e.event_date DESC, e.created_at DESC`
+  ),
   insertEvent: db.prepare(
-    "INSERT INTO events (id, name, slug, melhor_de, status, notes, created_by, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?)"
+    "INSERT INTO events (id, name, slug, melhor_de, status, notes, created_by, created_at, event_date) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)"
   ),
   updateEvent: db.prepare(
-    "UPDATE events SET name = COALESCE(?, name), melhor_de = COALESCE(?, melhor_de), status = COALESCE(?, status), notes = COALESCE(?, notes) WHERE id = ?"
+    "UPDATE events SET name = COALESCE(?, name), melhor_de = COALESCE(?, melhor_de), status = COALESCE(?, status), notes = COALESCE(?, notes), event_date = COALESCE(?, event_date) WHERE id = ?"
   ),
   deleteEvent: db.prepare("DELETE FROM events WHERE id = ?"),
+  usersByEvent: db.prepare(
+    `SELECT u.id, u.username, u.role FROM event_users eu
+     JOIN users u ON u.id = eu.user_id
+     WHERE eu.event_id = ?
+     ORDER BY u.username`
+  ),
+  eventUser: db.prepare("SELECT 1 AS ok FROM event_users WHERE event_id = ? AND user_id = ?"),
+  insertEventUser: db.prepare("INSERT OR IGNORE INTO event_users (event_id, user_id) VALUES (?, ?)"),
+  deleteEventUsers: db.prepare("DELETE FROM event_users WHERE event_id = ?"),
   mesasByEvent: db.prepare("SELECT * FROM mesas WHERE event_id = ? ORDER BY name"),
   mesaById: db.prepare("SELECT * FROM mesas WHERE id = ?"),
   mesaBySlug: db.prepare("SELECT * FROM mesas WHERE slug = ?"),
@@ -232,5 +286,19 @@ const stmts = {
       (SELECT COUNT(*) FROM matches) AS matches`
   )
 };
+
+try {
+  const orphans = db.prepare(
+    `SELECT id, created_by FROM events
+     WHERE created_by IS NOT NULL
+       AND NOT EXISTS (SELECT 1 FROM event_users eu WHERE eu.event_id = events.id)`
+  ).all();
+  const ins = db.prepare("INSERT OR IGNORE INTO event_users (event_id, user_id) VALUES (?, ?)");
+  for (const row of orphans) {
+    if (row.created_by) ins.run(row.id, row.created_by);
+  }
+} catch {
+  /* ignore */
+}
 
 export { stmts };

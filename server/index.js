@@ -108,10 +108,14 @@ function auth(req) {
   return row ? { token, user: publicUser(row), full: row } : null;
 }
 
-function requireUser(req, res) {
+function requireUser(req, res, opts) {
   const session = auth(req);
   if (!session) {
     error(res, 401, "Não autenticado.");
+    return null;
+  }
+  if ((!opts || !opts.allowPasswordChange) && session.user.must_change_password) {
+    error(res, 403, "Troque a senha antes de continuar.");
     return null;
   }
   return session;
@@ -154,6 +158,64 @@ function validPassword(v) {
 
 function eventOf(idOrSlug) {
   return stmts.eventByIdOrSlug.get(idOrSlug, idOrSlug);
+}
+
+function validEventDate(v) {
+  const s = trimStr(v, 10);
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(s)) return null;
+  const t = Date.parse(s + "T00:00:00");
+  if (Number.isNaN(t)) return null;
+  return s;
+}
+
+function eventUsers(ev) {
+  return stmts.usersByEvent.all(ev.id);
+}
+
+function setEventUsers(eventId, userIds, fallbackId) {
+  const ids = [];
+  const seen = new Set();
+  const raw = Array.isArray(userIds) ? userIds : [];
+  for (const id of raw) {
+    const key = String(id || "");
+    if (!key || seen.has(key)) continue;
+    const u = stmts.userById.get(key);
+    if (!u) continue;
+    seen.add(key);
+    ids.push(u.id);
+  }
+  if (!ids.length && fallbackId) ids.push(fallbackId);
+  stmts.deleteEventUsers.run(eventId);
+  for (const id of ids) stmts.insertEventUser.run(eventId, id);
+  return stmts.usersByEvent.all(eventId);
+}
+
+function canAccessEvent(session, ev) {
+  if (!session || !ev) return false;
+  if (session.user.role === "admin") return true;
+  return !!stmts.eventUser.get(ev.id, session.user.id);
+}
+
+function requireEventAccess(req, res, ev) {
+  const session = requireUser(req, res);
+  if (!session) return null;
+  if (!canAccessEvent(session, ev)) {
+    error(res, 403, "Sem acesso a este evento.");
+    return null;
+  }
+  return session;
+}
+
+function listEventRow(ev) {
+  const users = eventUsers(ev);
+  return {
+    ...ev,
+    users,
+    mesas: stmts.mesasByEvent.all(ev.id).length,
+    jogadores: stmts.playersByEvent.all(ev.id).length,
+    partidas: stmts.matchesByEvent.all(ev.id).length,
+    url: "/e/" + ev.slug
+  };
 }
 
 function matchBundle(match) {
@@ -322,13 +384,39 @@ async function handleApi(req, res, url) {
     return json(res, 200, { user: session ? session.user : null });
   }
 
+  if (method === "POST" && path === "/api/password") {
+    const session = requireUser(req, res, { allowPasswordChange: true });
+    if (!session) return;
+    let body;
+    try {
+      body = await readBody(req);
+    } catch {
+      return error(res, 400, "JSON inválido.");
+    }
+    const current = String((body && body.current) || "");
+    const next = validPassword(body && body.next);
+    if (!next) return error(res, 400, "A nova senha deve ter ao menos 4 caracteres.");
+    const row = stmts.userById.get(session.user.id);
+    if (!row || !verifyPassword(current, row.password_hash)) {
+      return error(res, 400, "Senha atual incorreta.");
+    }
+    if (verifyPassword(next, row.password_hash) || current === next) {
+      return error(res, 400, "A nova senha deve ser diferente da atual.");
+    }
+    if (next.toLowerCase() === "admin" || next.toLowerCase() === row.username.toLowerCase()) {
+      return error(res, 400, "Escolha uma senha menos óbvia.");
+    }
+    stmts.setOwnPassword.run(hashPassword(next), row.id);
+    return json(res, 200, { user: publicUser(stmts.userById.get(row.id)) });
+  }
+
   if (method === "GET" && path === "/api/stats") {
     if (!requireUser(req, res)) return;
     return json(res, 200, stmts.stats.get());
   }
 
   if (path === "/api/users" && method === "GET") {
-    if (!requireAdmin(req, res)) return;
+    if (!requireUser(req, res)) return;
     return json(res, 200, { users: stmts.users.all() });
   }
 
@@ -382,7 +470,7 @@ async function handleApi(req, res, url) {
       if (admins.length <= 1) return error(res, 400, "Não é possível remover o último admin.");
     }
     try {
-      stmts.updateUser.run(username, role, hash, row.id);
+      stmts.updateUser.run(username, role, hash, hash ? 1 : null, row.id);
     } catch {
       return error(res, 409, "Usuário já existe.");
     }
@@ -404,15 +492,12 @@ async function handleApi(req, res, url) {
   }
 
   if (path === "/api/eventos" && method === "GET") {
-    if (!requireUser(req, res)) return;
-    const events = stmts.events.all().map((ev) => ({
-      ...ev,
-      mesas: stmts.mesasByEvent.all(ev.id).length,
-      jogadores: stmts.playersByEvent.all(ev.id).length,
-      partidas: stmts.matchesByEvent.all(ev.id).length,
-      url: "/e/" + ev.slug
-    }));
-    return json(res, 200, { events });
+    const session = requireUser(req, res);
+    if (!session) return;
+    const rows = session.user.role === "admin"
+      ? stmts.events.all()
+      : stmts.eventsForUser.all(session.user.id);
+    return json(res, 200, { events: rows.map(listEventRow) });
   }
 
   if (path === "/api/eventos" && method === "POST") {
@@ -427,11 +512,15 @@ async function handleApi(req, res, url) {
     const name = validName(body && body.name, 2, 80);
     const melhorDe = validFormat(body && body.melhor_de) || 3;
     const notes = trimStr(body && body.notes, 400);
+    const eventDate = validEventDate(body && body.event_date);
     if (!name) return error(res, 400, "Informe o nome do evento.");
+    if (!eventDate) return error(res, 400, "Informe a data do evento.");
     const id = uid(12);
     const slug = uid(10);
-    stmts.insertEvent.run(id, name, slug, melhorDe, "ativo", notes, session.user.id, now());
-    return json(res, 201, { event: stmts.eventById.get(id) });
+    stmts.insertEvent.run(id, name, slug, melhorDe, "ativo", notes, session.user.id, now(), eventDate);
+    const users = setEventUsers(id, body && body.user_ids, session.user.id);
+    const event = stmts.eventById.get(id);
+    return json(res, 201, { event: { ...event, users } });
   }
 
   m = /^\/api\/eventos\/([^/]+)$/.exec(path);
@@ -439,7 +528,7 @@ async function handleApi(req, res, url) {
     const ev = eventOf(decodeURIComponent(m[1]));
     if (!ev) return error(res, 404, "Evento não encontrado.");
     return json(res, 200, {
-      event: ev,
+      event: { ...ev, users: eventUsers(ev) },
       mesas: stmts.mesasByEvent.all(ev.id),
       jogadores: stmts.playersByEvent.all(ev.id),
       partidas: stmts.matchesByEvent.all(ev.id).map((row) => matchBundle(row)),
@@ -448,9 +537,9 @@ async function handleApi(req, res, url) {
   }
 
   if (m && method === "PATCH") {
-    if (!requireUser(req, res)) return;
     const ev = eventOf(decodeURIComponent(m[1]));
     if (!ev) return error(res, 404, "Evento não encontrado.");
+    if (!requireEventAccess(req, res, ev)) return;
     let body;
     try {
       body = await readBody(req);
@@ -463,8 +552,12 @@ async function handleApi(req, res, url) {
     if (body.melhor_de != null && !melhorDe) return error(res, 400, "Formato inválido.");
     const status = body.status == null ? null : body.status === "encerrado" ? "encerrado" : "ativo";
     const notes = body.notes != null ? trimStr(body.notes, 400) : null;
-    stmts.updateEvent.run(name, melhorDe, status, notes, ev.id);
-    return json(res, 200, { event: stmts.eventById.get(ev.id) });
+    const eventDate = body.event_date != null ? validEventDate(body.event_date) : null;
+    if (body.event_date != null && !eventDate) return error(res, 400, "Data inválida.");
+    stmts.updateEvent.run(name, melhorDe, status, notes, eventDate, ev.id);
+    if (body.user_ids != null) setEventUsers(ev.id, body.user_ids, null);
+    const updated = stmts.eventById.get(ev.id);
+    return json(res, 200, { event: { ...updated, users: eventUsers(updated) } });
   }
 
   if (m && method === "DELETE") {
@@ -477,9 +570,9 @@ async function handleApi(req, res, url) {
 
   m = /^\/api\/eventos\/([^/]+)\/mesas$/.exec(path);
   if (m && method === "POST") {
-    if (!requireUser(req, res)) return;
     const ev = eventOf(decodeURIComponent(m[1]));
     if (!ev) return error(res, 404, "Evento não encontrado.");
+    if (!requireEventAccess(req, res, ev)) return;
     let body;
     try {
       body = await readBody(req);
@@ -500,9 +593,9 @@ async function handleApi(req, res, url) {
 
   m = /^\/api\/eventos\/([^/]+)\/jogadores$/.exec(path);
   if (m && method === "POST") {
-    if (!requireUser(req, res)) return;
     const ev = eventOf(decodeURIComponent(m[1]));
     if (!ev) return error(res, 404, "Evento não encontrado.");
+    if (!requireEventAccess(req, res, ev)) return;
     let body;
     try {
       body = await readBody(req);
@@ -526,7 +619,8 @@ async function handleApi(req, res, url) {
     const mesa = stmts.mesaById.get(key) || stmts.mesaBySlug.get(key);
     if (!mesa) return error(res, 404, "Mesa não encontrada.");
     if (method === "GET") return json(res, 200, mesaResultado(mesa));
-    if (!requireUser(req, res)) return;
+    const ev = stmts.eventById.get(mesa.event_id);
+    if (!requireEventAccess(req, res, ev)) return;
     if (method === "DELETE") {
       const live = stmts.liveOnMesa.get(mesa.id);
       if (live && live.status === "ao_vivo") return error(res, 400, "Há partida ao vivo nesta mesa.");
@@ -559,9 +653,10 @@ async function handleApi(req, res, url) {
 
   m = /^\/api\/jogadores\/([^/]+)$/.exec(path);
   if (m && (method === "PATCH" || method === "DELETE")) {
-    if (!requireUser(req, res)) return;
     const player = stmts.playerById.get(decodeURIComponent(m[1]));
     if (!player) return error(res, 404, "Jogador não encontrado.");
+    const ev = stmts.eventById.get(player.event_id);
+    if (!requireEventAccess(req, res, ev)) return;
     if (method === "DELETE") {
       const used = db.prepare("SELECT id FROM matches WHERE player1_id = ? OR player2_id = ? LIMIT 1").get(player.id, player.id);
       if (used) return error(res, 400, "Jogador já participa de partidas.");
@@ -585,8 +680,6 @@ async function handleApi(req, res, url) {
   }
 
   if (path === "/api/partidas" && method === "POST") {
-    const session = requireUser(req, res);
-    if (!session) return;
     let body;
     try {
       body = await readBody(req);
@@ -595,6 +688,8 @@ async function handleApi(req, res, url) {
     }
     const mesa = stmts.mesaById.get(body && body.mesa_id);
     if (!mesa) return error(res, 400, "Mesa inválida.");
+    const session = requireEventAccess(req, res, stmts.eventById.get(mesa.event_id));
+    if (!session) return;
     const p1 = stmts.playerById.get(body && body.player1_id);
     const p2 = stmts.playerById.get(body && body.player2_id);
     if (!p1 || !p2) return error(res, 400, "Jogadores inválidos.");

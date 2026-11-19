@@ -975,10 +975,33 @@ if (cursorTimer) { clearTimeout(cursorTimer); }
 cursorTimer = setTimeout(function () { root.classList.add("hide-cursor"); }, 3000);
 }
 
+function isMissingResource(err) {
+return !!(err && (err.status === 404 || /não encontrad/i.test(String(err.message || ""))));
+}
+
+export function showTvUnavailable() {
+var t = $("viewTv");
+if (t) {
+t.classList.remove("tv-hidden");
+t.classList.add("tv-empty", "tv-missing");
+}
+var u = $("tvUnavailable");
+if (u) { u.classList.remove("tv-hidden"); }
+var c = $("viewControl"); if (c) { c.classList.add("tv-hidden"); }
+}
+
+function clearTvUnavailable() {
+var t = $("viewTv");
+if (t) { t.classList.remove("tv-empty", "tv-missing"); }
+var u = $("tvUnavailable");
+if (u) { u.classList.add("tv-hidden"); }
+}
+
 function enterTv() {
 MODE = "tv";
 var c = $("viewControl"); if (c) { c.classList.add("tv-hidden"); }
 var t = $("viewTv"); if (t) { t.classList.remove("tv-hidden"); }
+clearTvUnavailable();
 var app = $("appRoot"); if (app) { app.style.background = "#0f1115"; }
 renderTv();
 requestFullscreen();
@@ -1121,6 +1144,11 @@ async function init(modeWanted) {
 MODE = modeWanted === "tv" ? "tv" : "control";
 try {
 var data = await api.partida(MATCH_SLUG);
+if (data.event && data.event.status === "encerrado") {
+var inactive = new Error("Evento encerrado.");
+inactive.status = 404;
+throw inactive;
+}
 applyMatchBundle(data);
 } catch (e) {
 logErr("estado inicial: " + e.message);
@@ -1155,6 +1183,10 @@ return "/";
 async function syncMesaTv() {
 if (!mesaWatchSlug) { return; }
 var data = await api.mesa(mesaWatchSlug);
+if (data.event && data.event.status === "encerrado") {
+showTvUnavailable();
+return;
+}
 var live = data.current && data.current.match ? data.current.match.slug : "";
 var latest = data.matches && data.matches[0] ? data.matches[0].slug : "";
 var slug = live || MATCH_SLUG || latest;
@@ -1176,9 +1208,19 @@ if (slug !== MATCH_SLUG) { await startScoreboard(slug, "tv"); }
 export async function startMesaTv(mesaSlug) {
 stopMesaWatch();
 mesaWatchSlug = mesaSlug;
+try {
 await syncMesaTv();
+} catch (e) {
+if (isMissingResource(e)) {
+showTvUnavailable();
+return;
+}
+throw e;
+}
 mesaWatchTimer = setInterval(function () {
-syncMesaTv().catch(function () {});
+syncMesaTv().catch(function (e) {
+if (isMissingResource(e)) { showTvUnavailable(); }
+});
 }, 2500);
 }
 
@@ -1192,7 +1234,15 @@ stopScoreboard();
 MATCH_SLUG = slug;
 started = true;
 errors = [];
+try {
 await init(modeWanted);
+} catch (e) {
+if (modeWanted === "tv" && isMissingResource(e)) {
+showTvUnavailable();
+return;
+}
+throw e;
+}
 }
 
 export function stopScoreboard() {

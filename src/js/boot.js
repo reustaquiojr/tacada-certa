@@ -3,6 +3,7 @@ import {
   parseRoute,
   showView,
   renderLogin,
+  renderChangePassword,
   renderPainel,
   renderEvento,
   renderUsuarios,
@@ -11,7 +12,7 @@ import {
   renderEventoPublico,
   renderLog
 } from "./pages.js";
-import { startScoreboard, startMesaTv, stopScoreboard, stopMesaWatch } from "./app.js";
+import { startScoreboard, startMesaTv, stopScoreboard, stopMesaWatch, showTvUnavailable } from "./app.js";
 
 const PUBLIC = new Set(["login", "tv", "mesaTv", "resultado", "mesa", "eventoPublico", "log"]);
 
@@ -27,6 +28,10 @@ export async function boot() {
   }
 
   if (route.name === "login") {
+    if (user && user.must_change_password) {
+      window.location.replace("/");
+      return;
+    }
     if (user) {
       const n = new URLSearchParams(window.location.search).get("next");
       window.location.replace(n && n.charAt(0) === "/" ? n : "/");
@@ -44,6 +49,15 @@ export async function boot() {
     return;
   }
 
+  const publicWhileLocked = new Set(["tv", "mesaTv", "resultado", "mesa", "eventoPublico", "log"]);
+  if (user && user.must_change_password && !publicWhileLocked.has(route.name)) {
+    stopScoreboard();
+    stopMesaWatch();
+    showView("viewLogin");
+    await renderChangePassword(document.getElementById("viewLogin"), user);
+    return;
+  }
+
   if (route.name === "usuarios" && (!user || user.role !== "admin")) {
     window.location.replace("/");
     return;
@@ -51,7 +65,11 @@ export async function boot() {
 
   if (route.name === "mesaTv") {
     showView("viewTv");
-    await startMesaTv(route.slug);
+    try {
+      await startMesaTv(route.slug);
+    } catch {
+      showTvUnavailable();
+    }
     return;
   }
 
@@ -62,7 +80,18 @@ export async function boot() {
     }
     stopMesaWatch();
     showView(route.name === "tv" ? "viewTv" : "viewControl");
-    await startScoreboard(route.slug, route.name === "tv" ? "tv" : "control");
+    try {
+      await startScoreboard(route.slug, route.name === "tv" ? "tv" : "control");
+    } catch (err) {
+      if (route.name === "tv") {
+        showTvUnavailable();
+        return;
+      }
+      showView("viewPages");
+      pages.innerHTML = '<main class="ad-main"><div class="pl-card"><h2>Mesa não cadastrada/ativa</h2>' +
+        '<p class="ad-err">' + String(err.message || err) + "</p>" +
+        '<a class="pl-btn" href="/">Voltar ao painel</a></div></main>';
+    }
     return;
   }
 

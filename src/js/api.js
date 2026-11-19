@@ -18,6 +18,7 @@ export const api = {
   me: () => req("GET", "/api/me"),
   login: (username, password) => req("POST", "/api/login", { username, password }),
   logout: () => req("POST", "/api/logout", {}),
+  changePassword: (current, next) => req("POST", "/api/password", { current, next }),
   stats: () => req("GET", "/api/stats"),
   users: () => req("GET", "/api/users"),
   createUser: (body) => req("POST", "/api/users", body),

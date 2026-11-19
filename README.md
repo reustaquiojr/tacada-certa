@@ -8,7 +8,7 @@ Sistema de eventos de sinuca/bilhar no modelo **six-red**, com placar ao vivo, T
 
 No Windows, dê dois cliques em `iniciar.bat`. Ele instala as dependências, gera a interface e sobe o servidor com watchdog.
 
-Usuário inicial: **admin** / **admin**. Troque a senha depois do primeiro acesso.
+Usuário inicial: **admin** / **admin**. No primeiro login o sistema pede para trocar a senha.
 
 Padrão: [http://localhost:8010](http://localhost:8010). Se a porta estiver ocupada:
 
