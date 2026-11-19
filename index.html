@@ -1,0 +1,239 @@
+<!DOCTYPE html>
+<html lang="pt-BR" data-theme="dark">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Placar de Sinuca ao Vivo</title>
+<link rel="icon" type="image/svg+xml" href="/assets/icon.svg">
+</head>
+<body>
+<div class="pl-app" id="appRoot">
+
+<div id="viewLogin" class="pl-hidden"></div>
+<div id="viewPages" class="pl-hidden"></div>
+
+<!-- ================= CONTROLE ================= -->
+<div id="viewControl" class="pl-hidden">
+<header class="pl-header">
+<div>
+<span class="pl-eyebrow">Ao vivo</span>
+<h1 class="pl-title">Placar de Sinuca</h1>
+<p class="pl-sub" id="ctlSubtitle">Sala: Mesa Principal · Melhor de 3</p>
+</div>
+<div class="pl-row-ctl">
+<span class="pl-badge" id="ctlFormatBadge">Melhor de 3</span>
+<span class="pl-badge" id="ctlRoomBadge">Sala: Mesa Principal</span>
+<span class="pl-badge ok" id="ctlSyncBadge">Sincronizado</span>
+<button class="pl-btn sec" id="btnPainel">Painel</button>
+<button class="pl-btn sec" id="btnLog">Log</button>
+<button class="pl-btn sec" id="btnResultado">Resultado</button>
+<button class="pl-btn sec" id="btnModeTv">Ver modo TV</button>
+<button class="pl-btn" id="btnOpenTv">Abrir TV em nova janela</button>
+</div>
+</header>
+
+<main class="pl-main">
+<div class="pl-card">
+<h2>Quadros dos jogadores</h2>
+<p class="pl-sub">Toque no quadro para colocar o jogador na jogada. Use os botões coloridos para lançar os pontos.</p>
+<div class="pl-players">
+<div class="pl-player" id="pl1">
+<input class="pl-pname" id="name1" value="Ricardo" aria-label="Nome do jogador 1" maxlength="20">
+<div class="pl-score" id="score1">0</div>
+<div class="pl-stats">
+<div>Vitórias<b id="wins1">0</b></div>
+<div>Tempo<b id="time1">00:00</b></div>
+<div>Maior tacada<b id="max1">0</b></div>
+<div>Tacada atual<b id="cur1">0</b></div>
+</div>
+<div class="pl-btns" id="btns1"></div>
+<div class="pl-row-ctl" style="justify-content:center; margin-top:10px;">
+<button class="pl-minus" id="minus1" title="Subtrair 1 ponto" aria-label="Subtrair 1 ponto do jogador 1">-1</button>
+</div>
+</div>
+<div class="pl-player" id="pl2">
+<input class="pl-pname" id="name2" value="Marcos" aria-label="Nome do jogador 2" maxlength="20">
+<div class="pl-score" id="score2">0</div>
+<div class="pl-stats">
+<div>Vitórias<b id="wins2">0</b></div>
+<div>Tempo<b id="time2">00:00</b></div>
+<div>Maior tacada<b id="max2">0</b></div>
+<div>Tacada atual<b id="cur2">0</b></div>
+</div>
+<div class="pl-btns" id="btns2"></div>
+<div class="pl-row-ctl" style="justify-content:center; margin-top:10px;">
+<button class="pl-minus" id="minus2" title="Subtrair 1 ponto" aria-label="Subtrair 1 ponto do jogador 2">-1</button>
+</div>
+</div>
+</div>
+<p class="pl-sub" style="margin-top:10px;">Os botões ficam bloqueados quando ninguém está na jogada, a partida está encerrada ou o confronto terminou.</p>
+<div class="pl-actions" id="actionBar">
+<button type="button" id="btnNextMatch" class="act-next pl-hidden">INICIAR PRÓXIMA PARTIDA</button>
+<button type="button" id="btnEndMatch" class="act-amber">Encerrar Partida</button>
+<button type="button" id="btnNewGame" class="act-grey">Novo Jogo</button>
+<button type="button" id="btnNewMatch" class="act-red">Novo Confronto</button>
+<button type="button" id="btnUndo" class="act-grey">Desfazer</button>
+</div>
+<div class="pl-row-ctl" style="margin-top:10px;">
+<div class="pl-field" style="margin-bottom:0;">
+<label class="pl-label" for="manualValue">Valor manual</label>
+<div class="pl-row-ctl">
+<input class="pl-input" id="manualValue" type="number" min="0" max="500" value="0" style="width:110px;">
+<button class="pl-btn sec" id="btnManual">Definir</button>
+</div>
+<span class="pl-help">Define a pontuação do jogador na jogada.</span>
+</div>
+</div>
+</div>
+
+<div class="pl-card">
+<h2>Controle da jogada</h2>
+<p class="pl-sub">Pause para congelar os cronômetros durante intervalos, trocas de taco ou consultas.</p>
+<div class="pl-row-ctl">
+<span class="pl-badge" id="badgeTurn">Ninguém na jogada</span>
+<span class="pl-badge" id="badgePause">Jogada ativa</span>
+<span class="pl-badge" id="badgeMatch">Partida 1 de 3</span>
+</div>
+<div class="pl-row-ctl" style="margin-top:12px;">
+<button class="pl-btn" id="btnPause">Pausar jogada</button>
+</div>
+</div>
+
+
+<div class="pl-grid2">
+<div class="pl-card">
+<h2>Configurações do confronto</h2>
+<p class="pl-sub">Escolha o formato e o nome da sala antes de começar.</p>
+<div class="pl-field">
+<label class="pl-label" for="cfgFormat">Formato do confronto</label>
+<select class="pl-select" id="cfgFormat">
+<option value="1">Melhor de 1</option>
+<option value="3" selected>Melhor de 3</option>
+<option value="5">Melhor de 5</option>
+<option value="7">Melhor de 7</option>
+</select>
+<span class="pl-help">Define quantas partidas podem ser disputadas.</span>
+</div>
+<div class="pl-field">
+<label class="pl-label" for="cfgRoom">Nome da sala</label>
+<input class="pl-input" id="cfgRoom" value="Mesa Principal" maxlength="30">
+<span class="pl-help">Usado para identificar a mesa na sincronização.</span>
+</div>
+<button class="pl-btn" id="btnApplyCfg">Aplicar</button>
+</div>
+
+<div class="pl-card">
+<h2>Histórico de confrontos</h2>
+<p class="pl-sub" id="histCount">0 confrontos registrados</p>
+<div class="pl-row-ctl" style="margin-bottom:10px;">
+<button class="pl-btn sec" id="btnExportCsv">Exportar CSV</button>
+<button class="pl-btn sec" id="btnClearHist">Limpar histórico</button>
+</div>
+<div style="max-height:220px; overflow-y:auto;">
+<table class="pl-table">
+<thead><tr><th>Data</th><th>Placar</th><th>Formato</th><th>Tempo</th><th>Maior</th></tr></thead>
+<tbody id="histBody"></tbody>
+</table>
+</div>
+</div>
+</div>
+
+<div class="pl-card">
+<h2>Diagnóstico</h2>
+<p class="pl-sub">Informações técnicas para suporte e conferência do estado da partida.</p>
+<div class="pl-diag" id="diagBox"></div>
+<div class="pl-last-click" id="lastClick">Último clique: nenhum</div>
+<div class="pl-err-list" id="diagErrors" style="margin-top:8px;"></div>
+</div>
+
+<div class="pl-card">
+<h2>Registro das Tacadas</h2>
+<p class="pl-sub" id="tacadaCount">Nenhuma tacada registrada</p>
+<div class="tacada-wrap">
+<table class="pl-table">
+<thead><tr><th>Hora</th><th>Jogador</th><th>Pontos</th><th>Bola</th><th>Placar</th></tr></thead>
+<tbody id="tacadaBody"></tbody>
+</table>
+</div>
+</div>
+
+<div class="pl-footer" id="ctlFooter">Placar de Sinuca · Six-red · Dados sincronizados pelo servidor.</div>
+</main>
+
+<div class="pl-modal pl-hidden" id="dlgNovoConfronto">
+<div class="pl-modal-card">
+<h2>Novo confronto</h2>
+<p class="pl-sub" id="ncHint">Escolha os jogadores desta mesa para o próximo confronto.</p>
+<div class="pl-field">
+<label class="pl-label" for="ncP1">Jogador 1</label>
+<select class="pl-select" id="ncP1"></select>
+</div>
+<div class="pl-field">
+<label class="pl-label" for="ncP2">Jogador 2</label>
+<select class="pl-select" id="ncP2"></select>
+</div>
+<div class="pl-field">
+<label class="pl-label" for="ncFmt">Formato</label>
+<select class="pl-select" id="ncFmt">
+<option value="1">Melhor de 1</option>
+<option value="3">Melhor de 3</option>
+<option value="5">Melhor de 5</option>
+<option value="7">Melhor de 7</option>
+</select>
+</div>
+<div class="ad-err" id="ncErr"></div>
+<div class="ad-links" style="margin-top:14px;">
+<button type="button" class="pl-btn sec" id="ncCancel">Cancelar</button>
+<button type="button" class="pl-btn" id="ncOk">Iniciar confronto</button>
+</div>
+</div>
+</div>
+</div>
+
+<!-- ================= TV ================= -->
+<div id="viewTv" class="tv-root tv-hidden">
+<div class="tv-ident" id="tvIdent">
+<div class="tv-ident-block">
+<span class="tv-ident-label">Campeonato</span>
+<span class="tv-ident-value" id="tvEvent">—</span>
+</div>
+<div class="tv-ident-block tv-ident-mesa">
+<span class="tv-ident-label">Mesa</span>
+<span class="tv-ident-value" id="tvMesaName">—</span>
+</div>
+</div>
+<div class="tv-top" id="tvTop">Melhor de 3 · Partida 1 de 3 · Tempo: <span class="tv-time" id="tvTime">00:00</span></div>
+<div class="tv-stage">
+<div class="tv-player" id="tvP1">
+<div class="tv-name" id="tvNomeJ1">Ricardo</div>
+<div class="tv-score" id="tvScore1">0</div>
+<div class="tv-meta">
+<div>Vitórias<br><b id="tvWins1">0</b></div>
+<div>Tempo<br><b id="tvPTime1">00:00</b></div>
+</div>
+<div class="tv-max">Maior tacada: <span id="tvMax1">0</span></div>
+</div>
+<div class="tv-player" id="tvP2">
+<div class="tv-name" id="tvNomeJ2">Marcos</div>
+<div class="tv-score" id="tvScore2">0</div>
+<div class="tv-meta">
+<div>Vitórias<br><b id="tvWins2">0</b></div>
+<div>Tempo<br><b id="tvPTime2">00:00</b></div>
+</div>
+<div class="tv-max">Maior tacada: <span id="tvMax2">0</span></div>
+</div>
+</div>
+<div class="tv-status" id="tvStatus">Clique no quadro de um jogador para começar</div>
+
+<button type="button" class="tv-fs-icon" id="tvBtnFull" title="Tela cheia" aria-label="Tela cheia">
+<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+<path d="M8 3H4v4M16 3h4v4M8 21H4v-4M16 21h4v-4"/>
+</svg>
+</button>
+<div class="tv-overlay tv-hidden" id="tvWinner"><p class="tv-win-label">VENCEDOR</p><p class="tv-win-name" id="tvWinnerTitle"></p><p class="tv-win-score" id="tvWinnerScore"></p></div>
+</div>
+
+</div>
+<script type="module" src="/src/main.js"></script>
+</body>
+</html>

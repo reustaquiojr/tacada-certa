@@ -1,0 +1,26 @@
+/* Skip-shell preflight that the original artifact loaded before the app CSS.
+   Kept so headings, lists, form controls and focus rings match the source. */
+*, ::before, ::after, ::backdrop {
+  margin: 0;
+  padding: 0;
+  border: 0 solid;
+  box-sizing: border-box;
+}
+[hidden]:where(:not([hidden="until-found"])) { display: none !important; }
+.hidden { display: none !important; }
+h1, h2, h3, h4, h5, h6 { font-size: inherit; font-weight: inherit; }
+a { color: inherit; text-decoration: inherit; }
+b, strong { font-weight: bolder; }
+ol, ul, menu { list-style: none; }
+svg, video, canvas, iframe { display: block; vertical-align: middle; }
+button, input, select, textarea {
+  color: inherit;
+  background-color: transparent;
+  border-radius: 0;
+  font: inherit;
+}
+table { border-collapse: collapse; }
+hr { height: 0; color: inherit; border-top-width: 1px; }
+html, body { margin: 0; padding: 0; }
+img { max-width: 100%; display: block; }
+:focus-visible { outline: 2px solid #2563eb; outline-offset: 2px; }
